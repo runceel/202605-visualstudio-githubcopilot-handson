@@ -1,4 +1,6 @@
 @page "/events"
+@using EventRegistration.Registrations.Application.DTOs
+@using EventRegistration.Registrations.Application.UseCases
 
 <PageTitle>イベント一覧</PageTitle>
 
@@ -21,6 +23,8 @@ else
     <MudGrid>
         @foreach (var ev in _events)
         {
+            var summary = _summaries.TryGetValue(ev.Id, out var s) ? s : new EventParticipationSummary(ev.Id, 0, 0);
+            var remaining = Math.Max(0, ev.Capacity - summary.ConfirmedCount);
             <MudItem xs="12" sm="6" md="4">
                 <MudCard Class="cursor-pointer" @onclick="() => NavigateToDetail(ev.Id)">
                     <MudCardHeader>
@@ -40,6 +44,21 @@ else
                             <MudIcon Icon="@Icons.Material.Filled.People" Size="Size.Small" Class="mr-1" />
                             定員: @ev.Capacity 名
                         </MudText>
+                        <MudText Typo="Typo.body2" Class="mb-2">
+                            参加確定: @summary.ConfirmedCount 名 / 定員 @ev.Capacity 名
+                        </MudText>
+                        @if (remaining == 0)
+                        {
+                            <MudChip T="string" Color="Color.Error" Size="Size.Small" Class="mb-1">満席</MudChip>
+                        }
+                        else
+                        {
+                            <MudText Typo="Typo.body2" Class="mb-1">残り @remaining 枠</MudText>
+                        }
+                        @if (summary.WaitListedCount > 0)
+                        {
+                            <MudChip T="string" Color="Color.Warning" Size="Size.Small" Class="mb-1">キャンセル待ちあり</MudChip>
+                        }
                         @if (!string.IsNullOrWhiteSpace(ev.Description))
                         {
                             <MudText Typo="Typo.body2" Class="mud-text-secondary">
@@ -55,14 +74,22 @@ else
 
 @code {
     [Inject] private GetAllEventsUseCase GetAllEventsUseCase { get; set; } = default!;
+    [Inject] private GetEventParticipationSummariesUseCase GetParticipationSummariesUseCase { get; set; } = default!;
     [Inject] private NavigationManager NavigationManager { get; set; } = default!;
 
     private IReadOnlyList<Event>? _events;
+    private IReadOnlyDictionary<Guid, EventParticipationSummary> _summaries = new Dictionary<Guid, EventParticipationSummary>();
     private bool _loading = true;
 
     protected override async Task OnInitializedAsync()
     {
         _events = await GetAllEventsUseCase.ExecuteAsync();
+        if (_events.Count > 0)
+        {
+            var summaryList = await GetParticipationSummariesUseCase.ExecuteAsync(
+                _events.Select(e => e.Id));
+            _summaries = summaryList.ToDictionary(s => s.EventId);
+        }
         _loading = false;
     }
 

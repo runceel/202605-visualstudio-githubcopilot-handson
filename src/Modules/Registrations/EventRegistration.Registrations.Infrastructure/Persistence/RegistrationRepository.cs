@@ -1,3 +1,4 @@
+using EventRegistration.Registrations.Application.DTOs;
 using EventRegistration.Registrations.Application.Repositories;
 using EventRegistration.Registrations.Domain;
 using Microsoft.EntityFrameworkCore;
@@ -56,5 +57,33 @@ public sealed class RegistrationRepository(RegistrationsDbContext dbContext) : I
     public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {
         await dbContext.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<EventParticipationSummary>> GetParticipationSummariesAsync(
+        IEnumerable<Guid> eventIds,
+        CancellationToken cancellationToken = default)
+    {
+        var eventIdList = eventIds.ToList();
+        if (eventIdList.Count == 0)
+        {
+            return [];
+        }
+
+        var summaries = await dbContext.Registrations
+            .Where(r => eventIdList.Contains(r.EventId) && r.Status != RegistrationStatus.Cancelled)
+            .GroupBy(r => r.EventId)
+            .Select(g => new EventParticipationSummary(
+                g.Key,
+                g.Count(r => r.Status == RegistrationStatus.Confirmed),
+                g.Count(r => r.Status == RegistrationStatus.WaitListed)))
+            .ToListAsync(cancellationToken);
+
+        // クエリ結果にない EventId は 0/0 で欠損補完
+        var summaryDict = summaries.ToDictionary(s => s.EventId);
+        return eventIdList
+            .Select(id => summaryDict.TryGetValue(id, out var s)
+                ? s
+                : new EventParticipationSummary(id, 0, 0))
+            .ToList();
     }
 }

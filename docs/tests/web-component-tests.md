@@ -15,7 +15,7 @@ UseCase のリポジトリインターフェースを NSubstitute でモック�
 
 | テストクラス | 対象 | テスト数 | 主な検証観点 |
 |---|---|---|---|
-| EventListTests | EventList.razor | 6 | 空リスト、一覧表示、詳細遷移 |
+| EventListTests | EventList.razor | 10 | 空リスト、一覧表示、詳細遷移、参加状況表示（TC-001〜TC-004） |
 | EventCreateTests | EventCreate.razor | 5 | フォーム表示、送信成功/エラー |
 | EventDetailTests | EventDetail.razor | 5 | 未発見、詳細表示、残枠計算 |
 | ParticipantListTests | ParticipantList.razor | 6 | 空表示、確定/待ち表示、キャンセルボタン |
@@ -71,6 +71,31 @@ src/tests/EventRegistration.Web.Tests/
 | WithEvents_ShowsDescription | 説明文が表示される |
 | ClickEventCard_NavigatesToDetail | カードクリックで `/events/{id}` に遷移 |
 | ShowsCreateButton | 「新しいイベントを作成」ボタンが表示される |
+
+#### 参加状況表示機能テスト（Issue #1 対応）
+
+> 対応 Issue: [#1 イベント一覧画面への参加状況表示機能](https://github.com/runceel/202605-visualstudio-githubcopilot-handson/issues/1)
+> 追加先ファイル: `EventRegistration.Web.Tests/Components/Pages/Events/EventListTests.cs`（既存クラスへの追加）
+
+`GetEventParticipationSummariesUseCase` と `GetAllEventsUseCase` の両方をモックし、EventList.razor が参加状況を正しく表示・非表示切り替えすることを検証する。
+
+| テスト ID | テストメソッド | シナリオ | 主な検証観点 |
+|---|---|---|---|
+| TC-001 | `ParticipationSummary_NoRegistrations_ShowsZeroConfirmedAndFullCapacity` | 登録 0 件: `ConfirmedCount=0, WaitListedCount=0` | 「参加確定: 0 名 / 定員 M 名」「残り M 枠」表示。「満席」「キャンセル待ちあり」は非表示 |
+| TC-002 | `ParticipationSummary_WithRemainingSlots_ShowsConfirmedAndRemainingSlots` | 残り枠あり: `ConfirmedCount=N (N<Capacity)` | 「参加確定: N 名 / 定員 M 名」「残り X 枠」表示。「満席」は非表示 |
+| TC-003 | `ParticipationSummary_FullCapacity_ShowsFullBadgeAndHidesRemainingSlots` | 満席: `ConfirmedCount >= Capacity` | 「満席」チップ表示。「残り枠数」テキストは非表示 |
+| TC-004 | `ParticipationSummary_WithWaitListed_ShowsWaitListedChip` | キャンセル待ちあり: `WaitListedCount>=1` | 「キャンセル待ちあり」チップ表示。「満席」チップも同時表示される |
+
+**モック戦略**:
+
+```mermaid
+graph LR
+    A[TC-001〜TC-004] --> B[EventList.razor]
+    B --> C[GetAllEventsUseCase NSubstitute モック]
+    B --> D[GetEventParticipationSummariesUseCase NSubstitute モック]
+    C --> E[固定イベントリストを返す]
+    D --> F[シナリオ別 EventParticipationSummary を返す]
+```
 
 ### EventCreate.razor
 
