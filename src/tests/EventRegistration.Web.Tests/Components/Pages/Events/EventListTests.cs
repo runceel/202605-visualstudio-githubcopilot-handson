@@ -1,6 +1,9 @@
 using EventRegistration.Events.Application.Repositories;
 using EventRegistration.Events.Application.UseCases;
 using EventRegistration.Events.Domain;
+using EventRegistration.Registrations.Application.DTOs;
+using EventRegistration.Registrations.Application.Repositories;
+using EventRegistration.Registrations.Application.UseCases;
 using EventRegistration.Web.Components.Pages.Events;
 using Microsoft.AspNetCore.Components;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,13 +15,17 @@ namespace EventRegistration.Web.Tests.Components.Pages.Events;
 public sealed class EventListTests : BunitContext
 {
     private IEventRepository _mockEventRepo = default!;
+    private IRegistrationRepository _mockRegRepo = default!;
 
     [TestInitialize]
     public void Setup()
     {
         _mockEventRepo = Substitute.For<IEventRepository>();
+        _mockRegRepo = Substitute.For<IRegistrationRepository>();
         Services.AddSingleton(_mockEventRepo);
+        Services.AddSingleton(_mockRegRepo);
         Services.AddTransient<GetAllEventsUseCase>();
+        Services.AddTransient<GetEventParticipationSummariesUseCase>();
         Services.AddMudServices();
         JSInterop.Mode = JSRuntimeMode.Loose;
     }
@@ -45,6 +52,8 @@ public sealed class EventListTests : BunitContext
         };
         _mockEventRepo.GetAllAsync(Arg.Any<CancellationToken>())
             .Returns((IReadOnlyList<Event>)events);
+        _mockRegRepo.GetParticipationSummariesAsync(Arg.Any<IEnumerable<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<EventParticipationSummary>)new List<EventParticipationSummary>());
 
         var cut = Render<EventList>();
 
@@ -61,6 +70,8 @@ public sealed class EventListTests : BunitContext
         var ev = Event.Create("テスト", null, DateTimeOffset.UtcNow.AddDays(7), 50);
         _mockEventRepo.GetAllAsync(Arg.Any<CancellationToken>())
             .Returns((IReadOnlyList<Event>)new List<Event> { ev });
+        _mockRegRepo.GetParticipationSummariesAsync(Arg.Any<IEnumerable<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<EventParticipationSummary>)new List<EventParticipationSummary>());
 
         var cut = Render<EventList>();
 
@@ -74,6 +85,8 @@ public sealed class EventListTests : BunitContext
         var ev = Event.Create("テスト", "イベントの詳細説明テキスト", DateTimeOffset.UtcNow.AddDays(7), 10);
         _mockEventRepo.GetAllAsync(Arg.Any<CancellationToken>())
             .Returns((IReadOnlyList<Event>)new List<Event> { ev });
+        _mockRegRepo.GetParticipationSummariesAsync(Arg.Any<IEnumerable<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<EventParticipationSummary>)new List<EventParticipationSummary>());
 
         var cut = Render<EventList>();
 
@@ -87,6 +100,8 @@ public sealed class EventListTests : BunitContext
         var ev = Event.Create("テスト", null, DateTimeOffset.UtcNow.AddDays(7), 10);
         _mockEventRepo.GetAllAsync(Arg.Any<CancellationToken>())
             .Returns((IReadOnlyList<Event>)new List<Event> { ev });
+        _mockRegRepo.GetParticipationSummariesAsync(Arg.Any<IEnumerable<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<EventParticipationSummary>)new List<EventParticipationSummary>());
 
         var cut = Render<EventList>();
 
@@ -109,5 +124,96 @@ public sealed class EventListTests : BunitContext
 
         cut.WaitForAssertion(() =>
             Assert.IsTrue(cut.Markup.Contains("新しいイベントを作成")));
+    }
+
+    // TC-001: 登録 0 件 - 参加確定 0 名・残り枠 = 定員・満席/キャンセル待ちは非表示
+    [TestMethod]
+    public void ParticipationSummary_NoRegistrations_ShowsZeroConfirmedAndFullCapacity()
+    {
+        var ev = Event.Create("テストイベント", null, DateTimeOffset.UtcNow.AddDays(7), 30);
+        _mockEventRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<Event>)new List<Event> { ev });
+        _mockRegRepo.GetParticipationSummariesAsync(Arg.Any<IEnumerable<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<EventParticipationSummary>)new List<EventParticipationSummary>
+            {
+                new EventParticipationSummary(ev.Id, ConfirmedCount: 0, WaitListedCount: 0)
+            });
+
+        var cut = Render<EventList>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.IsTrue(cut.Markup.Contains("参加確定: 0 名 / 定員 30 名"));
+            Assert.IsTrue(cut.Markup.Contains("残り 30 枠"));
+            Assert.IsFalse(cut.Markup.Contains("満席"));
+            Assert.IsFalse(cut.Markup.Contains("キャンセル待ちあり"));
+        });
+    }
+
+    // TC-002: 残り枠あり - ConfirmedCount=N (N<Capacity)
+    [TestMethod]
+    public void ParticipationSummary_WithRemainingSlots_ShowsConfirmedAndRemainingSlots()
+    {
+        var ev = Event.Create("テストイベント", null, DateTimeOffset.UtcNow.AddDays(7), 20);
+        _mockEventRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<Event>)new List<Event> { ev });
+        _mockRegRepo.GetParticipationSummariesAsync(Arg.Any<IEnumerable<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<EventParticipationSummary>)new List<EventParticipationSummary>
+            {
+                new EventParticipationSummary(ev.Id, ConfirmedCount: 5, WaitListedCount: 0)
+            });
+
+        var cut = Render<EventList>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.IsTrue(cut.Markup.Contains("参加確定: 5 名 / 定員 20 名"));
+            Assert.IsTrue(cut.Markup.Contains("残り 15 枠"));
+            Assert.IsFalse(cut.Markup.Contains("満席"));
+        });
+    }
+
+    // TC-003: 満席 - ConfirmedCount >= Capacity
+    [TestMethod]
+    public void ParticipationSummary_FullCapacity_ShowsFullBadgeAndHidesRemainingSlots()
+    {
+        var ev = Event.Create("テストイベント", null, DateTimeOffset.UtcNow.AddDays(7), 10);
+        _mockEventRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<Event>)new List<Event> { ev });
+        _mockRegRepo.GetParticipationSummariesAsync(Arg.Any<IEnumerable<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<EventParticipationSummary>)new List<EventParticipationSummary>
+            {
+                new EventParticipationSummary(ev.Id, ConfirmedCount: 10, WaitListedCount: 0)
+            });
+
+        var cut = Render<EventList>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.IsTrue(cut.Markup.Contains("満席"));
+            Assert.IsFalse(cut.Markup.Contains("残り 0 枠"));
+        });
+    }
+
+    // TC-004: キャンセル待ちあり - WaitListedCount >= 1
+    [TestMethod]
+    public void ParticipationSummary_WithWaitListed_ShowsWaitListedChip()
+    {
+        var ev = Event.Create("テストイベント", null, DateTimeOffset.UtcNow.AddDays(7), 10);
+        _mockEventRepo.GetAllAsync(Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<Event>)new List<Event> { ev });
+        _mockRegRepo.GetParticipationSummariesAsync(Arg.Any<IEnumerable<Guid>>(), Arg.Any<CancellationToken>())
+            .Returns((IReadOnlyList<EventParticipationSummary>)new List<EventParticipationSummary>
+            {
+                new EventParticipationSummary(ev.Id, ConfirmedCount: 10, WaitListedCount: 3)
+            });
+
+        var cut = Render<EventList>();
+
+        cut.WaitForAssertion(() =>
+        {
+            Assert.IsTrue(cut.Markup.Contains("満席"));
+            Assert.IsTrue(cut.Markup.Contains("キャンセル待ちあり"));
+        });
     }
 }

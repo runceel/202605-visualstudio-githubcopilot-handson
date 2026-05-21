@@ -42,6 +42,30 @@
 - InMemory DB 名: `"Registrations"`（モジュール単位で一意）
 - `EventId` + `Email` の組み合わせでユニーク制約（同一イベントに同じメールアドレスで重複登録を防止）
 
+### EventParticipationSummary DTO
+
+> 対応 Issue: [#1 イベント一覧画面への参加状況表示機能](https://github.com/runceel/202605-visualstudio-githubcopilot-handson/issues/1)
+
+複数イベントの参加状況を一括取得した結果を表す読み取り専用レコード。`EventRegistration.Registrations.Application.DTOs` 名前空間に配置した `sealed record` として実装されている。
+
+```csharp
+namespace EventRegistration.Registrations.Application.DTOs;
+
+public sealed record EventParticipationSummary(
+    Guid EventId,
+    int ConfirmedCount,
+    int WaitListedCount
+);
+```
+
+| プロパティ | 型 | 説明 |
+|---|---|---|
+| `EventId` | `Guid` | 対象イベントの ID |
+| `ConfirmedCount` | `int` | `RegistrationStatus.Confirmed` の件数 |
+| `WaitListedCount` | `int` | `RegistrationStatus.WaitListed` の件数 |
+
+> 残り枠数（`max(0, Capacity - ConfirmedCount)`）の算出は呼び出し元（`EventList.razor`）で行う。DTO はカウント値のみを保持し、`Cancelled` 状態の Registration は集計から除外される。
+
 ---
 
 ## 画面仕様
@@ -125,3 +149,118 @@
 |---|---|---|
 | Events | Registrations → Events | 参加登録時に定員（`Capacity`）を取得して定員チェックを行う |
 | Events | Events → Registrations | イベント詳細画面で対象イベントの参加者一覧・登録フォームを表示するためにデータを取得 |
+| Events（Web 層） | Web → Registrations | イベント一覧画面で `GetEventParticipationSummariesUseCase` を呼び出し、参加状況サマリーを一括取得する |
+
+---
+
+## ユースケース
+
+Registrations モジュールの Application 層に定義されるユースケース一覧。
+
+### GetEventParticipationSummariesUseCase
+
+> 対応 Issue: [#1 イベント一覧画面への参加状況表示機能](https://github.com/runceel/202605-visualstudio-githubcopilot-handson/issues/1)
+
+複数イベントの参加状況サマリーを一括取得するユースケース。イベント一覧画面での N+1 問題を防ぐために追加した。
+
+| 項目 | 内容 |
+|---|---|
+| 名前空間 | `EventRegistration.Registrations.Application.UseCases` |
+| 責務 | `IRegistrationRepository.GetParticipationSummariesAsync` を呼び出し、複数イベント分の参加状況を 1 回のクエリで一括取得する |
+| 入力 | `IEnumerable<Guid> eventIds` — 取得対象のイベント ID リスト |
+| 出力 | `Task<IReadOnlyList<EventParticipationSummary>>` |
+| 配置ファイル | `DTOs/EventParticipationSummary.cs`、`UseCases/GetEventParticipationSummariesUseCase.cs` |
+
+#### 実際のメソッドシグネチャ
+
+```csharp
+public sealed class GetEventParticipationSummariesUseCase(IRegistrationRepository registrationRepository)
+{
+    public async Task<IReadOnlyList<EventParticipationSummary>> ExecuteAsync(
+        IEnumerable<Guid> eventIds,
+        CancellationToken cancellationToken = default)
+    {
+        return await registrationRepository.GetParticipationSummariesAsync(eventIds, cancellationToken);
+    }
+}
+```
+
+#### N+1 問題対策: バッチクエリパターン
+
+イベント一覧画面では複数イベントが表示される。各イベントごとに `CountConfirmedByEventIdAsync` を呼び出すと、N 件のイベントに対して N 回のクエリが発行される（N+1 問題）。これを防ぐため、`GetParticipationSummariesAsync` は複数イベント ID をまとめて受け取り、EF Core の `GroupBy` を使った 1 回のバッチクエリで全イベント分の集計を返す。
+
+```mermaid
+sequenceDiagram
+    participant Page as EventList.razor
+    participant UC1 as GetAllEventsUseCase
+    participant UC2 as GetEventParticipationSummariesUseCase
+    participant Repo as IRegistrationRepository
+    participant DB as Registrations DB
+
+    Page->>UC1: ExecuteAsync()
+    UC1-->>Page: IReadOnlyList<Event>
+    Page->>UC2: ExecuteAsync([id1, id2, ...])
+    UC2->>Repo: GetParticipationSummariesAsync([id1, id2, ...])
+    Repo->>DB: 1 回のバッチクエリ（GroupBy）
+    DB-->>Repo: 集計結果
+    Repo-->>UC2: IReadOnlyList<EventParticipationSummary>
+    UC2-->>Page: IReadOnlyList<EventParticipationSummary>
+```
+
+**欠損補完**: クエリ結果に含まれない（登録 0 件の）イベントは `ConfirmedCount=0, WaitListedCount=0` として補完する。
+
+---
+
+## リポジトリインターフェース
+
+### IRegistrationRepository 追加メソッド: GetParticipationSummariesAsync
+
+> 対応 Issue: [#1 イベント一覧画面への参加状況表示機能](https://github.com/runceel/202605-visualstudio-githubcopilot-handson/issues/1)
+
+既存の `CountConfirmedByEventIdAsync(Guid eventId)` は単一イベント用。一覧画面でのバッチ取得のために以下のメソッドを追加する。
+
+| 項目 | 内容 |
+|---|---|
+| メソッド名 | `GetParticipationSummariesAsync` |
+| 引数 | `IEnumerable<Guid> eventIds`、`CancellationToken cancellationToken = default` |
+| 戻り値 | `Task<IReadOnlyList<EventParticipationSummary>>` |
+| 空リスト処理 | `eventIds` が空の場合は DB クエリを発行せず即時空コレクションを返す |
+| Cancelled 除外 | `RegistrationStatus.Cancelled` の Registration は集計から除外する |
+
+**Infrastructure 実装**: `RegistrationRepository` にて EF Core `GroupBy` + 欠損補完パターンで実装している（`Registrations.Infrastructure/Persistence/RegistrationRepository.cs`）。
+
+```csharp
+public async Task<IReadOnlyList<EventParticipationSummary>> GetParticipationSummariesAsync(
+    IEnumerable<Guid> eventIds,
+    CancellationToken cancellationToken = default)
+{
+    var eventIdList = eventIds.ToList();
+    if (eventIdList.Count == 0)
+    {
+        return [];
+    }
+
+    var summaries = await dbContext.Registrations
+        .Where(r => eventIdList.Contains(r.EventId) && r.Status != RegistrationStatus.Cancelled)
+        .GroupBy(r => r.EventId)
+        .Select(g => new EventParticipationSummary(
+            g.Key,
+            g.Count(r => r.Status == RegistrationStatus.Confirmed),
+            g.Count(r => r.Status == RegistrationStatus.WaitListed)))
+        .ToListAsync(cancellationToken);
+
+    // クエリ結果にない EventId（登録 0 件）は ConfirmedCount=0, WaitListedCount=0 で欠損補完
+    var summaryDict = summaries.ToDictionary(s => s.EventId);
+    return eventIdList
+        .Select(id => summaryDict.TryGetValue(id, out var s)
+            ? s
+            : new EventParticipationSummary(id, 0, 0))
+        .ToList();
+}
+```
+
+**ポイント:**
+- `eventIds` が空の場合は DB クエリを発行せず即時 `[]` を返す（短絡評価）
+- `GroupBy(r => r.EventId)` で 1 回のクエリに集約し N+1 問題を回避
+- `Status != Cancelled` の条件で Cancelled 件数を除外
+- 登録 0 件のイベントはクエリ結果に含まれないため、`eventIdList` を基準に Dictionary 参照で欠損補完する

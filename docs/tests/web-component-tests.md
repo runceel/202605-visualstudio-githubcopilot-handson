@@ -15,7 +15,7 @@ UseCase のリポジトリインターフェースを NSubstitute でモック�
 
 | テストクラス | 対象 | テスト数 | 主な検証観点 |
 |---|---|---|---|
-| EventListTests | EventList.razor | 6 | 空リスト、一覧表示、詳細遷移 |
+| EventListTests | EventList.razor | 10 | 空リスト、一覧表示、詳細遷移、参加状況表示（TC-001〜TC-004） |
 | EventCreateTests | EventCreate.razor | 5 | フォーム表示、送信成功/エラー |
 | EventDetailTests | EventDetail.razor | 5 | 未発見、詳細表示、残枠計算 |
 | ParticipantListTests | ParticipantList.razor | 6 | 空表示、確定/待ち表示、キャンセルボタン |
@@ -71,6 +71,33 @@ src/tests/EventRegistration.Web.Tests/
 | WithEvents_ShowsDescription | 説明文が表示される |
 | ClickEventCard_NavigatesToDetail | カードクリックで `/events/{id}` に遷移 |
 | ShowsCreateButton | 「新しいイベントを作成」ボタンが表示される |
+
+#### 参加状況表示機能テスト（Issue #1 対応）
+
+> 対応 Issue: [#1 イベント一覧画面への参加状況表示機能](https://github.com/runceel/202605-visualstudio-githubcopilot-handson/issues/1)
+> 追加先ファイル: `EventRegistration.Web.Tests/Components/Pages/Events/EventListTests.cs`（既存クラスへの追加）
+
+`IEventRepository` と `IRegistrationRepository` を NSubstitute でモックし、実 UseCase（`GetAllEventsUseCase` / `GetEventParticipationSummariesUseCase`）はリアル実装を DI 登録する。EventList.razor が参加状況を正しく表示・非表示切り替えすることを検証する。
+
+| テスト ID | テストメソッド | シナリオ | 主な検証指量 |
+|---|---|---|---|
+| TC-001 | `ParticipationSummary_NoRegistrations_ShowsZeroConfirmedAndFullCapacity` | 登録 0 件: `ConfirmedCount=0, WaitListedCount=0, Capacity=30` | `"参加確定: 0 名 / 定員 30 名"` 含む、`"残り 30 枠"` 含む、`"満席"` を含まない、`"キャンセル待ちあり"` を含まない |
+| TC-002 | `ParticipationSummary_WithRemainingSlots_ShowsConfirmedAndRemainingSlots` | 残り枠あり: `ConfirmedCount=5, WaitListedCount=0, Capacity=20` | `"参加確定: 5 名 / 定員 20 名"` 含む、`"残り 15 枠"` 含む、`"満席"` を含まない |
+| TC-003 | `ParticipationSummary_FullCapacity_ShowsFullBadgeAndHidesRemainingSlots` | 満席: `ConfirmedCount=10, WaitListedCount=0, Capacity=10` | `"満席"` 含む、`"残り 0 枠"` を含まない |
+| TC-004 | `ParticipationSummary_WithWaitListed_ShowsWaitListedChip` | キャンセル待ちあり: `ConfirmedCount=10, WaitListedCount=3, Capacity=10` | `"満席"` 含む、`"キャンセル待ちあり"` 含む（満席チップも同時表示） |
+
+**モック戦略**:
+
+```mermaid
+graph LR
+    A[TC-001〜TC-004] --> B[EventList.razor]
+    B --> C[GetAllEventsUseCase リアル実装]
+    B --> D[GetEventParticipationSummariesUseCase リアル実装]
+    C --> E[IEventRepository NSubstitute モック]
+    D --> F[IRegistrationRepository NSubstitute モック]
+    E --> G[固定イベントリストを返す]
+    F --> H[シナリオ別 EventParticipationSummary を返す]
+```
 
 ### EventCreate.razor
 
